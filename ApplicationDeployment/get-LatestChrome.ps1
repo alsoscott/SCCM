@@ -1,11 +1,14 @@
 <#
  ************************************************************************************************************************
 Created:    2019-05-27
-Version:    1.1
+Version:    1.2
+
+#Update 12 June 2019
+Sanitized for public use
  
 Disclaimer:
 This script is provided "AS IS" with no warranties, confers no rights and 
-is not supported by the authors or DeploymentArtist.
+is not supported by the author.
  
 Author - Scott Churchill
 Contact - Various places on internet as AlsoScott
