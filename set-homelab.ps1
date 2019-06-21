@@ -1,3 +1,28 @@
+<#
+************************************************************************************************************************
+.SYNOPSIS
+This is a Powershell script to build out a homelab.
+ 
+Disclaimer: This script is provided "AS IS" with no warranties, confers no rights and is not supported by the author.
+Author - Scott Churchill
+Contact - Various places on internet as AlsoScott
+
+.DESCRIPTION
+Includes Domain Controller and WSUS so far, plans to include SQL Server and Configuration Manager as well
+Designed to be run on Server Core 
+
+.EXAMPLE
+./set-homelab.ps1 (plans to add future functionality here)
+
+
+.NOTES
+Created:    2019-06-21
+Version:    0.5 (Pre-release)
+
+Update 21 June 2019
+Creatied initial script, built out some basic functions but nothing is really called upon yet.
+************************************************************************************************************************
+#>
 Param(
 	[Parameter(Mandatory=$false, Position=0, HelpMessage="Type of server?")]
 	[String]$ServerBuild
