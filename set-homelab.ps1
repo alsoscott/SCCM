@@ -36,7 +36,7 @@ function startup {
 	$strNetAdapter = (get-netipaddress -AddressFamily IPv4 | where InterfaceAlias -like "*Ethernet*")
 	$n = ($strNetAdapter | measure); if ($n.count -gt "1"){Write-Host -ForegroundColor Red "Multiple available network adapters present"}
 	$strCurrentIP = $strNetAdapter.IPAddress
-	if ($strNetAdapter.AddressState -ne "Static"){Write-Host -ForegroundColor red "Warning! Network adapter is currently set for DHCP"}
+	if ($strNetAdapter.AddressState -eq "Prefered"){Write-Host -ForegroundColor red "Warning! Network adapter is currently set for DHCP"}
 	$script:strInterfaceAlias = $strNetAdapter.InterfaceAlias
 
 	#load switch options
@@ -56,31 +56,25 @@ function startup {
 	$message = "Would you like to update?"
 	$result = $host.ui.PromptForChoice($title, $message, $options, 1)
 	switch ($result) {
-		0{
-		$Script:strComputerName = read-host "Enter new Device Name"
-		$Script:strIpAddress = read-host "Enter new IP Address"
-		$Script:strDefaultGateWay = read-host "Enter new Default Gateway"
-		$Script:strDnsAddress = read-host "Enter new DNS Server"
-		$Script:strDomain = read-host "Enter target domain to join"
-		set-ServerConfig
-	}
+		0{	#Gathering Options
+			$strComputerName = read-host "Enter new Device Name"
+			$strIpAddress = read-host "Enter new IP Address"
+			$strDefaultGateWay = read-host "Enter new Default Gateway"
+			$strDnsAddress = read-host "Enter new DNS Server"
+			$strDomain = read-host "Enter target domain to join"
+			#Options gathered, setting config
+			if ($strComputerName) {rename-computer -NewName $strComputerName}
+			if ($strIpAddress) {
+				Set-TimeZone -Name "US Mountain Standard Time"
+				New-NetIPAddress -InterfaceAlias $strInterfaceAlias -AddressFamily IPv4  -IPAddress $strIpAddress -PrefixLength 24 -DefaultGateway $strDefaultGateWay
+				Set-DnsClientServerAddress -InterfaceAlias $strInterfaceAlias -ServerAddresses $strDnsAddress
+				}
+			if ($strDomain){add-computer –domainname $strDomain}
+			}
 		1{Write-Host "Not Changed"}
 		2{Write-Host "Canceling..." ; exit}
 	}
 }
-
-function set-ServerConfig {
-	if ($Script:strComputerName) {rename-computer -ComputerName $strComputerName}
-	if ($Script:strIpAddress) {
-		Set-TimeZone -Name "US Mountain Standard Time"
-		New-NetIPAddress -InterfaceAlias $script:strInterfaceAlias -AddressFamily IPv4  -IPAddress $Script:strIpAddress -PrefixLength 24 -DefaultGateway $Script:strDefaultGateWay
-		Set-DnsClientServerAddress -InterfaceAlias $script:strInterfaceAlias -ServerAddresses $Script:strDnsAddress
-		}
-	if ($script:strDomain){add-computer –domainname $Script:strDomain}
-		
-	
-}
-
 
 function setup-DomainController {
 
@@ -91,16 +85,18 @@ function setup-DomainController {
 	$options = [System.Management.Automation.Host.ChoiceDescription[]]($NewForest, $JoinForest, $cancel)
 
 	$title = "Setting up Domain Controller"
-	$message = "Creating new forest, select 1?	Joining existing Forest, Select 2"
+	$message = "Create new forest?	Joining existing Forest, Select 2"
 	$result = $host.ui.PromptForChoice($title, $message, $options, 1)
 	switch ($result) {
-		0{
-			#New Forest
+		0{	#New Forest
 			Write-host -ForegroundColor Yellow "Creating a new Forest"
+			Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+			Install-ADDSForest -DomainName $TargetDomain -InstallDNS:$True
 		}
-		1{
-			#Join Existing Forest
+		1{	#Join Existing Forest
 			Write-host -ForegroundColor Yellow "Joining an existing Forest"
+			Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+			Install-ADDSDomainController -Domainname $TargetDomain -InstallDNS:$True -credential (Get-Credential)
 		}
 		2{Write-Host "Canceling..." ; exit}
 	}
