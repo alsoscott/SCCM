@@ -49,25 +49,25 @@ If (!(Test-Path -Path $Script:strFinalDirectory)){
     exit
 }
 
-Function GetVersion {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $ie = New-Object -com internetexplorer.application
-    $url = "https://cloud.google.com/chrome-enterprise/browser/download/"
-    $ie.navigate($url)
-    while ($ie.Busy -eq $true) { Start-Sleep -Seconds 5; }
-    $titles = $ie.Document.body.getElementsByClassName('cloud-browser-downloads__dl-row-chrome-version') | select -First 1
-    foreach ($storyTitle in $titles) {
-         $strChromeVersion = $storyTitle.innerText
-         }
-    Set-Variable -Name strChromeVersion -Value ($strChromeVersion) -Scope Script
-    #$Script:strChromeVersion = $strChromeVersion
-    If (!($Script:strChromeVersion)){Write-Output "Chrome Version undetected, exiting"; exit}
-    #kills ie after running
-    $ie.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($ie) | Out-Null
-    [System.GC]::Collect()
-    [System.GC]::WaitForPendingFinalizers()
-
+Function Get-ChromeVersion {
+    [CmdletBinding()]
+    Param (
+        [Parameter(Mandatory = $False)]
+        [string] $Uri = "https://omahaproxy.appspot.com/all.json",
+ 
+        [Parameter(Mandatory = $False)]
+        [ValidateSet('win', 'win64', 'mac', 'linux', 'ios', 'cros', 'android', 'webview')]
+        [string] $Platform = "win",
+ 
+        [Parameter(Mandatory = $False)]
+        [ValidateSet('stable', 'beta', 'dev', 'canary', 'canary_asan')]
+        [string] $Channel = "stable"
+    )
+ 
+    # Read the JSON and convert to a PowerShell object. Return the current release version of Chrome
+    $chromeVersions = (Invoke-WebRequest -uri $Uri).Content | ConvertFrom-Json
+    $Script:strChromeVersion = (($chromeVersions | Where-Object { $_.os -eq $Platform }).versions | `
+            Where-Object { $_.channel -eq $Channel }).current_version
     
     If (!(Test-Path -Path $Script:strFinalDirectory\$strChromeVersion)){
         Write-Host "Chrome $Script:strChromeVersion available, downloading now." -ForegroundColor Yellow
@@ -76,7 +76,6 @@ Function GetVersion {
         Write-Host "Latest Version ($strChromeVersion) already deployed." -ForegroundColor Yellow
         exit
     }
-
 }
 
 Function GetChrome {
@@ -228,7 +227,7 @@ if((Get-Module ConfigurationManager) -eq $null) {
 
 
 
-GetVersion
+Get-ChromeVersion
 GetChrome
 CreateBatch
 UpdateFiles
