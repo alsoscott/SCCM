@@ -45,7 +45,7 @@ Param(
     [string[]] $Platform = @('win32-x64'),
     [Parameter()]
     [ValidateSet('https://update.code.visualstudio.com/api/update')]
-    [string[]] $Url = 'https://update.code.visualstudio.com/api/update'
+    [string[]] $script:url = 'https://update.code.visualstudio.com/api/update'
     )
 
     # Output array
@@ -58,20 +58,20 @@ Param(
         ForEach ($ch in $Channel) {
             try {
                 Write-Verbose "Getting release info for $ch."
-                $release = Invoke-WebRequest -Uri "$url/$plat/$ch/VERSION" -UseBasicParsing `
+                $release = Invoke-WebRequest -Uri "$script:url/$plat/$ch/VERSION" -UseBasicParsing `
                     -ErrorAction SilentlyContinue
             }
             catch {
-                Write-Error "Error connecting to $url/$plat/$ch/VERSION, with error $_"
+                Write-Error "Error connecting to $script:url/$plat/$ch/VERSION, with error $_"
                 Break
             }
             finally {
                 $releaseJson = $release | ConvertFrom-Json
-                $VSCodeVersion = $releaseJson.productVersion
-                [string]$url = $releaseJson.url ; Write-Output $Url
-                If (!($VSCodeVersion)){Write-Host "Version not found." -ForegroundColor Yellow; exit 1}
-                If (!(Test-Path -Path $Script:FinalDirectory\$VSCodeVersion)){Write-Host "New Version Needed, VSCode $VSCodeVersion downloading now." -ForegroundColor Yellow}
-                else {Write-Host "Latest Version ($VSCodeVersion) already deployed." -ForegroundColor Yellow; exit}
+                $script:VSCodeVersion = $releaseJson.productVersion
+                [string]$script:url = $releaseJson.url ; Write-Output $script:url
+                If (!($script:VSCodeVersion)){Write-Host "Version not found." -ForegroundColor Yellow; exit 1}
+                If (!(Test-Path -Path $Script:FinalDirectory\$script:VSCodeVersion)){Write-Host "New Version Needed, VSCode $script:VSCodeVersion downloading now." -ForegroundColor Yellow}
+                else {Write-Host "Latest Version ($script:VSCodeVersion) already deployed." -ForegroundColor Yellow; exit}
             
             }
         }
@@ -80,22 +80,23 @@ Param(
 }
 Function GetVSCode {
     # Download the installer
+    Write-host "Attempting to download version $script:VSCodeVersion to $TempDirectory from $script:url" -ForegroundColor Yellow
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $ie = New-Object -com internetexplorer.application
-    New-Item -ItemType Directory "$TempDirectory\$VSCodeVersion" -Force | Out-Null
-    (New-Object System.Net.WebClient).DownloadFile($url, "$TempDirectory\$VSCodeVersion\VSCode64.exe")
+    New-Item -ItemType Directory "$TempDirectory\$script:VSCodeVersion" -Force | Out-Null
+    (New-Object System.Net.WebClient).DownloadFile($script:url, "$TempDirectory\$script:VSCodeVersion\VSCode64.exe")
     Start-Sleep -Seconds 15
-    Write-host "Files Downloaded to $TempDirectory\$VSCodeVersion" -ForegroundColor Yellow
+    Write-host "Files Downloaded to $TempDirectory\$script:VSCodeVersion" -ForegroundColor Yellow
     } 
     catch {Write-Host 'Download failed. There was a problem with the download.' -ForegroundColor Red; exit} 
 }
 Function UpdateFiles {
-    Write-Host "Uploading to Source's Share ($Script:FinalDirectory\$VSCodeVersion)" -ForegroundColor Yellow
+    Write-Host "Uploading to Source's Share ($Script:FinalDirectory\$script:VSCodeVersion)" -ForegroundColor Yellow
     try {
         # Copy the installer to server
-        Copy-item -Container -Recurse "$TempDirectory\$VSCodeVersion" $Script:FinalDirectory
-        Copy-item  "$Script:FinalDirectory\set-VSCode.ps1" $Script:FinalDirectory\$VSCodeVersion
+        Copy-item -Container -Recurse "$TempDirectory\$script:VSCodeVersion" $Script:FinalDirectory
+        Copy-item  "$Script:FinalDirectory\set-VSCode.ps1" $Script:FinalDirectory\$script:VSCodeVersion
         } catch {
         Write-Host "Upload failed. You will have to move the installer yourself from $TempDirectory" -ForegroundColor Red
     }
@@ -115,14 +116,14 @@ if((Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue
 Set-Location "$($SiteCode):\" @initParams
     
 #Build updated Detection Method Clauses
-$clause = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Microsoft VS Code" -FileName "Code.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $VSCodeVersion
+$clause = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Microsoft VS Code" -FileName "Code.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $script:VSCodeVersion
 #pulling Package information to update
 $SDMPackageXML = (Get-CMDeploymentType -ApplicationName "$($Script:CurrentPkgName)" -DeploymentTypeName "$($Script:CurrentPkgName)").SDMPackageXML
 [string[]]$OldDetections = (([regex]'(?<=SettingLogicalName=.)([^"]|\\")*').Matches($SDMPackageXML)).Value
 #paramaters set, populatating chagnes in SCCM now
 Write-Host "Updating Deployment Packages" -ForegroundColor Yellow
-Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $VSCodeVersion
-Set-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$VSCodeVersion -RemoveDetectionClause $OldDetections -AddDetectionClause($clause)
+Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion
+Set-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$script:VSCodeVersion -RemoveDetectionClause $OldDetections -AddDetectionClause($clause)
 Write-Host "Redistributing Content" -ForegroundColor Yellow
 update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName 
 #re-schedule deployments
@@ -146,11 +147,11 @@ if((Get-Module ConfigurationManager) -eq $null) {
         #Build Deployment collection
         New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:strDeployColl -RefreshType Periodic
         #Build updated Detection Method Clauses
-        $clause1 = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Microsoft VS Code" -FileName "Code.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $VSCodeVersion
+        $clause1 = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Microsoft VS Code" -FileName "Code.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $script:VSCodeVersion
         #paramaters set, populatating chagnes in SCCM now
         Write-Host "Creating Deployment Packages" -ForegroundColor Yellow
-        New-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $VSCodeVersion
-        Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$VSCodeVersion -AddDetectionClause($clause1) -InstallCommand "'set-VSCode.ps1' -Perform Install" -UninstallCommand "'set-VSCode.ps1' -Perform Uninstall"
+        New-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion
+        Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$script:VSCodeVersion -AddDetectionClause($clause1) -InstallCommand "'set-VSCode.ps1' -Perform Install" -UninstallCommand "'set-VSCode.ps1' -Perform Uninstall"
         #Distributing content
         Write-Host "Distributing Content" -ForegroundColor Yellow
         Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointName $ProviderMachineName
