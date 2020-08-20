@@ -3,8 +3,7 @@
 Created:    2019-05-27
 Version:    1.2
 
-#Update: 2 July 2020
-Copied from updated script and sanitized for public use
+#Update: 12 June 2019
 
  
 Disclaimer:
@@ -24,16 +23,18 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 param ([switch]$FirstRun)
 #Define locations to cache and upload the installer and scripts
 $Script:strTempDirectory = $env:TEMP #inital download directory
-$Script:strFinalDirectory = "\\server\share" #final destination for Chrome installers
-$Script:strSiteCode = "SMSSiteCode" # SCCM Site code 
-$Script:strProviderMachineName = "SCCM Site Server" # SMS Provider machine name
+$Script:strFinalDirectory = "<srouce share>\<application>\" #final destination for Chrome installers
+$Script:strSiteCode = "<SMSSiteCode>" # SCCM Site code 
+$Script:strProviderMachineName = "<site server>" # SMS Provider machine name
 $Script:strCurrentPkgName = "Google Chrome - Current"
-$Script:strPreviousPkgName = "Google Chrome - Previous"
+$Script:strPreviousPkgName = "Google Chrome - Rollback"
 #Deployment Collections
-$Script:strPilotColl = "CollectionName"
-$Script:strWkstAll = "CollectionName"
-$Script:strServerAll = "CollectionName"
-$Script:strOutdatedColl = "CollectionName"
+$Script:strPilotColl = "Deploy | Wkst PILOT | Chrome"
+$Script:strWkstAll = "Deploy | Wkst All | Chrome"
+$Script:strServerAll = "Deploy | Server | Chrome"
+$Script:strCucumberAll = "Deploy | Cucumber | Chrome"
+#Query for Outdated versions
+$script:strOutdatedChrome = "Query | Google Chrome Outdated"
 #defines and resets Chrome version varable
 $Script:strChromeVersion = $null
 
@@ -42,6 +43,7 @@ If (!(Test-Path -Path .\Get-MSIFileInformation.ps1)){
     Write-Host "MSI File Information Script not present.  If lost, download from https://www.scconfigmgr.com/2014/08/22/how-to-get-msi-file-information-with-powershell/ " -ForegroundColor Red
     exit
 }
+
 
 #Checking for destination directory
 If (!(Test-Path -Path $Script:strFinalDirectory)){
@@ -77,15 +79,12 @@ Function Get-ChromeVersion {
         exit
     }
 }
-
 Function GetChrome {
     # Download the installer from Google
 try {
     $strLinkx64 = 'http://dl.google.com/edgedl/chrome/install/GoogleChromeStandaloneEnterprise64.msi'
-	$strLinkx86 = 'http://dl.google.com/edgedl/chrome/install/GoogleChromeStandaloneEnterprise.msi'
-    New-Item -ItemType Directory "$strTempDirectory\$strChromeVersion" -Force | Out-Null
+	New-Item -ItemType Directory "$strTempDirectory\$strChromeVersion" -Force | Out-Null
     (New-Object System.Net.WebClient).DownloadFile($strLinkx64, "$strTempDirectory\$strChromeVersion\GoogleChromeStandaloneEnterprise64.msi")
-    (New-Object System.Net.WebClient).DownloadFile($strLinkx86, "$strTempDirectory\$strChromeVersion\GoogleChromeStandaloneEnterprise.msi")
     Start-Sleep -Seconds 5
     Write-host "Downloaded Chrome $Script:strChromeVersion" -ForegroundColor Yellow
     } catch {
@@ -96,39 +95,52 @@ try {
     #get Product Code for both versions
     Import-Module .\Get-MSIFileInformation.ps1 -Force
     $strProductCodex64 = (MSIInfo -Path "$Script:strTempDirectory\$Script:strChromeVersion\GoogleChromeStandaloneEnterprise64.msi" -Property ProductCode) | Out-String
-    $strProductCodex86 = (MSIInfo -Path "$Script:strTempDirectory\$Script:strChromeVersion\GoogleChromeStandaloneEnterprise.msi" -Property ProductCode) | Out-String
     $Script:strProductCodex64 = $strProductCodex64.Replace('{','').Replace('}','')
-    $Script:strProductCodex86 = $strProductCodex86.Replace('{','').Replace('}','')
-    #Set-Variable -Name strProductCodex64 -Value ($strProductCodex64) -Scope Script
-    #et-Variable -Name strProductCodex86 -Value ($strProductCodex86) -Scope Script
+
+    $strPreviousLocation = (Get-ChildItem -Path $Script:strFinalDirectory -Attributes D | Where-Object { $_.Name -match '\d' } | Sort-Object -Property LastWriteTime | select -last 1).fullname
+    $strOldProdcutCode = (MSIInfo -path $strPreviousLocation\GoogleChromeStandaloneEnterprise64.msi -Property ProductCode) | Out-String
+    $Script:strOldProductCode = $strOldProdcutCode.Replace('{','').Replace('}','')
+
     Write-Host "Gathered the following Product Codes." -ForegroundColor Yellow
-    Write-Host "x64: $Script:strProductCodex64" -ForegroundColor Green
-    Write-Host "x86: $Script:strProductCodex86" -ForegroundColor Green
+    Write-Host "New Product Code: "$Script:strProductCodex64 -ForegroundColor Green
+    Write-Host "Old Product Code: "$Script:strOldProductCode -ForegroundColor Green
+    
 }
 
 Function CreateBatch {
 #create installer/removal scipts
 $installbatch=@'
-@echo off
-taskkill /IM chrome.exe /f 2> nul
-:CheckOS
-IF EXIST "%PROGRAMFILES(X86)%" (GOTO 64BIT) ELSE (GOTO 32BIT)
-:64BIT
-msiexec /i "%~dp0GoogleChromeStandaloneEnterprise64.msi" /qn /norestart REINSTALLMODE=vomus
-GOTO END
-:32BIT
-msiexec /i "%~dp0GoogleChromeStandaloneEnterprise.msi" /qn /norestart REINSTALLMODE=vomus
-GOTO END
-:END
+param ([parameter(Mandatory=$true)][string]$Action)
+if (!($PSScriptRoot)){$PSScriptRoot = Split-Path $MyInvocation.MyCommand.Path}
+if (!($PSScriptRoot)){exit 1}
+
+if ($action -eq "rollback"){
+    if (get-process Chrome -ErrorAction SilentlyContinue) {get-process Chrome | stop-process -force}
+    $UninstallCode = (Get-WmiObject -Class SMS_InstalledSoftware -Namespace root\cimv2\sms -Filter "ProductName = 'Google Chrome'").SoftwareCode
+    msiexec.exe /X $UninstallCode /qn
+    do {start-sleep -Seconds 5} until (!(test-path 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'))
+    msiexec /i GoogleChromeStandaloneEnterprise64.msi /qn /norestart REINSTALLMODE=vomus
+    do {start-sleep -Seconds 5} until (test-path 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe')
+}
+
+if ($action -eq "install"){
+    if (get-process Chrome -ErrorAction SilentlyContinue) {get-process Chrome | stop-process -force}
+    msiexec /i GoogleChromeStandaloneEnterprise64.msi /qn /norestart REINSTALLMODE=vomus
+	do {start-sleep -Seconds 5} until (test-path 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe')
+    }
+
+if ($action -eq "uninstall"){
+    if (get-process Chrome -ErrorAction SilentlyContinue) {get-process Chrome | stop-process -force}
+    $UninstallCode = (Get-WmiObject -Class SMS_InstalledSoftware -Namespace root\cimv2\sms -Filter "ProductName = 'Google Chrome'").SoftwareCode
+    msiexec.exe /X $UninstallCode /qn
+    do {start-sleep -Seconds 5} until (!(test-path 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'))
+}
 '@
 
-$uninstallbatch=@'
-wmic product where "name like 'Google Chrome'" call uninstall
-'@
 
-$installbatch | out-file $strTempDirectory\$strChromeVersion\install.bat -Encoding ascii
-$uninstallbatch | out-file $strTempDirectory\$strChromeVersion\uninstall.bat -Encoding ascii
-Write-Host "Built batch installer scripts" -ForegroundColor Yellow
+$installbatch | out-file $strTempDirectory\$strChromeVersion\set-chrome.ps1 -Encoding ascii
+
+Write-Host "Built PoSH installer script" -ForegroundColor Yellow
 }
 
 Function UpdateFiles {
@@ -143,6 +155,8 @@ Function UpdateFiles {
     }
     Write-Host "Uploaded to Source's Share ($Script:strFinalDirectory\$Script:strChromeVersion)" -ForegroundColor Yellow
 }
+
+
 #update deployment package on SCCM to current version, and redistribute
 Function SetSCCMDeployment {
 Write-Host "Connecting to SCCM Site Server" -ForegroundColor Yellow
@@ -154,44 +168,60 @@ if((Get-Module ConfigurationManager) -eq $null) {
 if((Get-PSDrive -Name $Script:strSiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) {
     New-PSDrive -Name $Script:strSiteCode -PSProvider CMSite -Root $Script:strProviderMachineName @initParams
 }
+$curLoc = (Get-Location)
 Set-Location "$($Script:strSiteCode):\" @initParams
 
 #Update Collection membership rules for Outdated Chrome
 $query = "select SMS_R_SYSTEM.ResourceID,SMS_R_SYSTEM.ResourceType,SMS_R_SYSTEM.Name,SMS_R_SYSTEM.SMSUniqueIdentifier,SMS_R_SYSTEM.ResourceDomainORWorkgroup,SMS_R_SYSTEM.Client from SMS_R_System inner join SMS_G_System_INSTALLED_SOFTWARE on SMS_G_System_INSTALLED_SOFTWARE.ResourceID = SMS_R_System.ResourceId where SMS_G_System_INSTALLED_SOFTWARE.ProductName like 'Google Chrome%' and SMS_G_System_INSTALLED_SOFTWARE.ProductVersion < '$strChromeVersion'"
-remove-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:strOutdatedColl -RuleName 'Outdated' -Force
-add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:strOutdatedColl -RuleName "Outdated" -QueryExpression $query
+remove-CMDeviceCollectionQueryMembershipRule -CollectionName $script:strOutdatedChrome -RuleName 'Outdated' -Force
+add-CMDeviceCollectionQueryMembershipRule -CollectionName $script:strOutdatedChrome -RuleName "Outdated" -QueryExpression $query
+
 
 #Build updated Detection Method Clauses
-$clause1 = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex64 -Existence
-$clause2 = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex86 -Existence
-$clause1.Connector = 'Or'
-$clause2.Connector = 'Or'
+$clause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex64 -Existence
+$PreviousClause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strOldProductCode -Existence
+
 #pulling Package information to update
 $Script:strCurrentPkg = (Get-CMApplication -Name $strCurrentPkgName)
-$strAppMgmt = ([xml]$CurrentPkg.SDMPackageXML).AppMgmtDigest
+$strAppMgmt = ([xml]$Script:strCurrentPkg.SDMPackageXML).AppMgmtDigest
 $strDeploymentType = $strAppMgmt.DeploymentType | select -First 1
 $strPreviousLocation = $strDeploymentType.Installer.Contents.Content.Location
+
+#previous package
+$PreviousSDMPackageXML = (Get-CMDeploymentType -ApplicationName "$($Script:strPreviousPkgName)" -DeploymentTypeName "$($Script:strPreviousPkgName)").SDMPackageXML
+[string[]]$strPreviousOldDetections = (([regex]'(?<=SettingLogicalName=.)([^"]|\\")*').Matches($PreviousSDMPackageXML)).Value
+
+#current package
 $SDMPackageXML = (Get-CMDeploymentType -ApplicationName "$($strCurrentPkgName)" -DeploymentTypeName "$($strCurrentPkgName)").SDMPackageXML
 [string[]]$strOldDetections = (([regex]'(?<=SettingLogicalName=.)([^"]|\\")*').Matches($SDMPackageXML)).Value
+
+
 #paramaters set, populatating chagnes in SCCM now
 Write-Host "Updating Deployment Packages" -ForegroundColor Yellow
+#previous package
+Set-CMApplication -Name $Script:strPreviousPkgName -SoftwareVersion $Script:strCurrentPkg.SoftwareVersion
+Set-CMScriptDeploymentType -ApplicationName $Script:strPreviousPkgName -DeploymentTypeName $Script:strPreviousPkgName -ContentLocation $strPreviousLocation -RemoveDetectionClause $strPreviousOldDetections -AddDetectionClause($PreviousClause)
+#current package
 Set-CMApplication -Name $Script:strCurrentPkgName -SoftwareVersion $Script:strChromeVersion
-Set-CMScriptDeploymentType -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName -ContentLocation $Script:strFinalDirectory\$Script:strChromeVersion -RemoveDetectionClause $strOldDetections -AddDetectionClause($clause1,$clause2)
-Set-CMScriptDeploymentType -ApplicationName $Script:strPreviousPkgName -DeploymentTypeName $Script:strPreviousPkgName -ContentLocation $Script:strPreviousLocation
+Set-CMScriptDeploymentType -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName -ContentLocation $Script:strFinalDirectory\$Script:strChromeVersion -RemoveDetectionClause $strOldDetections -AddDetectionClause($clause)
+
 Write-Host "Redistributing Content" -ForegroundColor Yellow
+Update-CMDistributionPoint -ApplicationName $Script:strPreviousPkgName -DeploymentTypeName $Script:strPreviousPkgName
 Update-CMDistributionPoint -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName
 #re-schedule deployments
 $strServerDate = @(@(0..7) | % {$(Get-Date 18:00:00).AddDays($_)} | ? {$_.DayOfWeek -ieq "Friday"})[0]
 Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
 Write-Host "Starting at below times, during maintenance window"  -ForegroundColor Yellow
 Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strPilotColl -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(0)
-Write-Host " - Pilot : "(get-date 18:00:00).AddDays(0) -ForegroundColor Yellow
+Write-Host "Pilot : "(get-date 18:00:00).AddDays(0) -ForegroundColor Yellow
 Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strWkstAll -AvailableDateTime (get-date 06:00:00).AddDays(0)  -DeadlineDateTime (get-date 18:00:00).AddDays(2)
-Write-Host " - All Wkst : "(get-date 18:00:00).AddDays(2) -ForegroundColor Yellow
+Write-Host "All Wkst : "(get-date 18:00:00).AddDays(2) -ForegroundColor Yellow
 Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strServerAll -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime $strServerDate
-Write-Host " - All Server : "$strServerDate -ForegroundColor Yellow
+Write-Host "All Server : "$strServerDate -ForegroundColor Yellow
+Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strCucumberAll -AvailableDateTime (get-date 06:00:00).AddDays(7) -DeadlineDateTime (get-date 18:00:00).AddDays(14)
+Write-Host "Cucumber : "(get-date 18:00:00).AddDays(7) -ForegroundColor Yellow
 #return to local disk
-sl c:
+Set-Location $curLoc
 }
 
 Function FirstRun {
@@ -208,14 +238,12 @@ if((Get-Module ConfigurationManager) -eq $null) {
     Set-Location "$($strSiteCode):\" @initParams
             
     #Build updated Detection Method Clauses
-        $clause1 = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex64 -Existence
-        $clause2 = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex86 -Existence
-        $clause1.Connector = 'Or'
-        $clause2.Connector = 'Or'
+        $clause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex64 -Existence
+        $clause.Connector = 'Or'
     #paramaters set, populatating changes in SCCM now
         Write-Host "Creating Deployment Packages" -ForegroundColor Yellow
         New-CMApplication -Name $Script:strCurrentPkgName -SoftwareVersion $Script:strChromeVersion
-        Add-CMScriptDeploymentType -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName -ContentLocation $Script:strFinalDirectory\$strChromeVersion -AddDetectionClause($clause1,$clause2) -InstallCommand "install.bat" -UninstallCommand "uninstall.bat"
+        Add-CMScriptDeploymentType -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName -ContentLocation $Script:strFinalDirectory\$strChromeVersion -AddDetectionClause($clause) -InstallCommand "set-Chrome.ps1 -Action install" -UninstallCommand "set-Chrome.ps1 -Action uninstall"
         Write-Host "Distributing Content" -ForegroundColor Yellow
         Update-CMDistributionPoint -ApplicationName $Script:strPreviousPkgName -DeploymentTypeName $Script:strPreviousPkgName
         Update-CMDistributionPoint -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName
