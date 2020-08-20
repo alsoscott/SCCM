@@ -1,3 +1,4 @@
+# Define the temporary location to cache the installer.
 <#
  ************************************************************************************************************************
 Created:    2019-05-27
@@ -22,9 +23,9 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 #>
 param ([switch]$FirstRun)
 $TempDirectory = $env:TEMP #inital download directory
-$Script:FinalDirectory = "\\server\share" #final destination for VSCode installers
-$SiteCode = "SMSSiteCode" # SCCM Site code 
-$ProviderMachineName = "SCCM Site Server" # SMS Provider machine name
+$Script:FinalDirectory = "<srouce share>\<application>\" #final destination for VSCode installers
+$SiteCode = "<SMSSiteCode>" # SCCM Site code 
+$ProviderMachineName = "<site server>" # SMS Provider machine name
 $Script:CurrentPkgName = "VSCode - Current"
 $Script:strDeployColl = "Deploy | VSCode"
 #Checking for destination directory
@@ -34,35 +35,54 @@ If (!(Test-Path -Path $Script:FinalDirectory)){
 }
 
 Function GetVersion {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $ie = New-Object -com internetexplorer.application
-    $url = "https://code.visualstudio.com/updates"
-    $ie.navigate($url)
-    while ($ie.Busy -eq $true) { Start-Sleep -Seconds 5}
-    $titles = $ie.Document.body.getElementsByTagName('H1')
-    foreach ($storyTitle in $titles) {
-         $VSCodeVersion = $storyTitle.innerText | Select-String "\d\.\d\d" -AllMatches |
-         foreach {$_.Matches} | foreach {$_.Value}         
+[CmdletBinding()]
+Param(
+    [Parameter()]
+    [ValidateSet('insider', 'stable')]
+    [string[]] $Channel = @('stable'),
+    [Parameter()]
+    [ValidateSet('win32-x64')]
+    [string[]] $Platform = @('win32-x64'),
+    [Parameter()]
+    [ValidateSet('https://update.code.visualstudio.com/api/update')]
+    [string[]] $Url = 'https://update.code.visualstudio.com/api/update'
+    )
+
+    # Output array
+    $output = @()
+
+    # Walk through each platform
+    ForEach ($plat in ($Platform | Sort-Object)) {
+        Write-Verbose "Getting release info for $plat."
+        # Walk through each channel in the platform
+        ForEach ($ch in $Channel) {
+            try {
+                Write-Verbose "Getting release info for $ch."
+                $release = Invoke-WebRequest -Uri "$url/$plat/$ch/VERSION" -UseBasicParsing `
+                    -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Error "Error connecting to $url/$plat/$ch/VERSION, with error $_"
+                Break
+            }
+            finally {
+                $releaseJson = $release | ConvertFrom-Json
+                $VSCodeVersion = $releaseJson.productVersion
+                [string]$url = $releaseJson.url ; Write-Output $Url
+                If (!($VSCodeVersion)){Write-Host "Version not found." -ForegroundColor Yellow; exit 1}
+                If (!(Test-Path -Path $Script:FinalDirectory\$VSCodeVersion)){Write-Host "New Version Needed, VSCode $VSCodeVersion downloading now." -ForegroundColor Yellow}
+                else {Write-Host "Latest Version ($VSCodeVersion) already deployed." -ForegroundColor Yellow; exit}
+            
+            }
+        }
     }
-    If (!($VSCodeVersion)){Write-Host "Version not found." -ForegroundColor Yellow; exit 1}
-        If (!(Test-Path -Path $Script:FinalDirectory\$VSCodeVersion)){
-        Write-Host "New Version Needed, VSCode $VSCodeVersion downloading now." -ForegroundColor Yellow
-    }
-    else {
-        Write-Host "Latest Version ($VSCodeVersion) already deployed." -ForegroundColor Yellow
-        exit
-    }
+
 }
 Function GetVSCode {
     # Download the installer
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $ie = New-Object -com internetexplorer.application
-    $url = "https://update.code.visualstudio.com/$VSCodeVersion.0/win32-x64/stable"
-    #$Filex64 = "VSCode.$VSCodeVersion.exe"
-    #$ie.navigate($url)
-    #$Linkx64 = "$url/$Filex64"
-    
     New-Item -ItemType Directory "$TempDirectory\$VSCodeVersion" -Force | Out-Null
     (New-Object System.Net.WebClient).DownloadFile($url, "$TempDirectory\$VSCodeVersion\VSCode64.exe")
     Start-Sleep -Seconds 15
