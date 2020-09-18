@@ -24,10 +24,6 @@ param ([switch]$FirstRun)
  
 
 
-#Move to site config - $Script:FinalDirectory = "\\server\share" #final destination for Firefox installers
-#Move to site config - $Script:SiteCode = "AZR" # SCCM Site code 
-#Move to site config - $Script:ProviderMachineName = "SCCM Site Server" # SMS Provider machine name
-
 $Script:TempDirectory = $env:TEMP #inital download directory
 $Script:CurrentPkgName = "Mozilla Firefox - Current"
 $Script:FirefoxVersion = $null
