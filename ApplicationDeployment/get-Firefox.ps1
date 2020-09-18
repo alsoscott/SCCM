@@ -22,18 +22,24 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 #>
 param ([switch]$FirstRun)
  
+if (!(get-psdrive -PSProvider CMSite -ErrorAction SilentlyContinue)) {. ..\set-sccmsite.ps1}
+
+
 
 
 $Script:TempDirectory = $env:TEMP #inital download directory
-$Script:CurrentPkgName = "Mozilla Firefox - Current"
-$Script:FirefoxVersion = $null
+$Script:CurrentPkgName = "Mozilla Firefox"
 $Script:FirefoxColl = "Deploy | Mozilla Firefox"
 $Script:FirefoxOutDateColl = "Query | Firefox Outdated"
+$Script:FirefoxVersion = $null
+$SourceShare = "\\$ProviderMachineName\Source$"
+$Script:FinalDirectory = "$SourceShare\Software\Firefox"
 
 #Checking for destination directory
 If (!(Test-Path -Path $Script:FinalDirectory)){
-    Write-Host "Unable to locate destination directory, exiting..." -ForegroundColor Red
-    exit
+    Write-Host "Unable to locate destination directory, attempting to create..." -ForegroundColor Yellow
+    try {new-item -ItemType Directory -Path $Script:FinalDirectory | Out-Null; Write-Host -ForegroundColor Green "Success!"}
+    catch {Write-Host -ForegroundColor Red "Unable to create $Script:FinalDirectory - must exit now"; exit 0}
 }
 
 Function GetVersion {
@@ -73,10 +79,8 @@ if (Test-Connection download.mozialla.com -Count 3 -Quiet) {
     # Download the installer from Mozzilla
 try {
     $Linkx64 = 'https://download.mozilla.org/?product=firefox-latest-ssl&os=win64&lang=en-US'
-	$Linkx86 = 'https://download.mozilla.org/?product=firefox-latest-ssl&os=win&lang=en-US'
-    New-Item -ItemType Directory "$Script:TempDirectory\$Script:FirefoxVersion" -Force | Out-Null
+	New-Item -ItemType Directory "$Script:TempDirectory\$Script:FirefoxVersion" -Force | Out-Null
     (New-Object System.Net.WebClient).DownloadFileAsync($Linkx64, "$Script:TempDirectory\$Script:FirefoxVersion\MozillaFirefox64.exe")
-    (New-Object System.Net.WebClient).DownloadFileAsync($Linkx86, "$Script:TempDirectory\$Script:FirefoxVersion\MozillaFirefox32.exe")
     Start-Sleep -Seconds 5
     Write-host "Files Downloaded to $Script:TempDirectory\$Script:FirefoxVersion" -ForegroundColor Yellow
     } catch {
@@ -98,51 +102,41 @@ Function UpdateFiles {
 #update deployment package on SCCM to current version, and redistribute
 Function SetSCCMDeployment {
     param ([switch]$FirstRun)
+    
+    Write-Host "Connecting to SCCM Site Server" -ForegroundColor Yellow
     $curLoc = (Get-Location)
-Write-Host "Connecting to SCCM Site Server" -ForegroundColor Yellow
-#site connection
-#update based on site config - this should be a one-liner
-<#
-$initParams = @{}
-if((Get-Module ConfigurationManager) -eq $null) {
-    Import-Module "$($ENV:SMS_ADMIN_UI_PATH)\..\ConfigurationManager.psd1" @initParams 
-}
-if((Get-PSDrive -Name $Script:SiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) {
-    New-PSDrive -Name $Script:SiteCode -PSProvider CMSite -Root $Script:ProviderMachineName @initParams
-}
-Set-Location "$($Script:SiteCode):\" @initParams
-#>
+    Set-Location "$($SiteCode):\" @initParams
 
 
 #Update Collection membership rules for Outdated Chrome
 $query = "select SMS_R_SYSTEM.ResourceID,SMS_R_SYSTEM.ResourceType,SMS_R_SYSTEM.Name,SMS_R_SYSTEM.SMSUniqueIdentifier,SMS_R_SYSTEM.ResourceDomainORWorkgroup,SMS_R_SYSTEM.Client from SMS_R_System inner join SMS_G_System_INSTALLED_SOFTWARE on SMS_G_System_INSTALLED_SOFTWARE.ResourceID = SMS_R_System.ResourceId where SMS_G_System_INSTALLED_SOFTWARE.ProductName like 'Mozilla Firefox%' and SMS_G_System_INSTALLED_SOFTWARE.ProductVersion < '$Script:FirefoxVersion'"
 if ($FirstRun){
-    #create collections - Query and Deploy
-    #create query membership
-    #include query in deployment
-    #create folders - use if (AppQuery \ AppDeploy)
-    #move to folders
-    
+    if (!(test-path "DeviceCollection\AppQueries")) {Write-Host -ForegroundColor Yellow "Creating AppQueries Folder, Console needs to be restarted if open" ; new-item -Name "AppQueries" -Path $($SiteCode+":\DeviceCollection")}
+    if (!(test-path "DeviceCollection\AppDeployments")) {Write-Host -ForegroundColor Yellow "Creating AppDeployments Folder, Console needs to be restarted if open" ; new-item -Name 'AppDeployments' -Path $($SiteCode+":\DeviceCollection")}
+    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:FirefoxOutDateColl
+    Add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:FirefoxOutDateColl -RuleName "Firefox Outdated" -QueryExpression $query
+    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:FirefoxColl
+    Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $Script:FirefoxColl -IncludeCollectionName $Script:FirefoxOutDateColl
+    Move-CMObject -FolderPath "DeviceCollection\AppQueries" -InputObject (Get-CMDeviceCollection -Name $Script:FirefoxOutDateColl)
+    Move-CMObject -FolderPath "DeviceCollection\AppDeployments" -InputObject (Get-CMDeviceCollection -Name $Script:FirefoxColl)   
 } else {
     remove-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:FirefoxOutDateColl -RuleName "Firefox Outdated" -Force -ErrorAction SilentlyContinue
     add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:FirefoxOutDateColl -RuleName "Firefox Outdated" -QueryExpression $query -Force
-    
 }
 
 #Build updated Detection Method Clauses
 $clause1 = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Mozilla Firefox\" -FileName "Firefox.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $Script:FirefoxVersion
-#pulling Package information to update
-
 if (!($FirstRun)){
+    #pulling Package information to update
     $SDMPackageXML = (Get-CMDeploymentType -ApplicationName "$($Script:CurrentPkgName)" -DeploymentTypeName "$($Script:CurrentPkgName)").SDMPackageXML
     [string[]]$OldDetections = (([regex]'(?<=SettingLogicalName=.)([^"]|\\")*').Matches($SDMPackageXML)).Value
 } 
 #paramaters set, populatating chagnes in SCCM now
 if ($FirstRun){
-    new app
-    new deployment type
-    distrubute content
-    new deployment
+    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:FirefoxVersion
+    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:FirefoxVersion -InstallCommand "install.bat" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause1
+    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
+    New-CMApplicationDeployment -CollectionName $Script:FirefoxColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime
 } else {
     Write-Host "Updating Deployment Packages" -ForegroundColor Yellow
     Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $Script:FirefoxVersion
