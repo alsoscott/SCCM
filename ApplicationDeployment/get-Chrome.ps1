@@ -217,30 +217,28 @@ if ($FirstRun){
     Write-Host "Creating Application, Deployment Type and deploying to $Script:DeployColl" -ForegroundColor Yellow  
     #Create Current Application
     Write-host "Creating Applicaton, Deployment Type, and Deplying to $Script:DeployColl"
-    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion
-    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Install" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause
-    Write-Host "Distributing $Script:CurrentPkgName" -ForegroundColor Yellow
-    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
-    New-CMApplicationDeployment -CollectionName $Script:DeployColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime
+    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion | Out-Null
+    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Install" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause  | Out-Null
+    Write-Host "Distributing $Script:CurrentPkgName" -ForegroundColor Yellow  | Out-Null
+    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)  | Out-Null
+    New-CMApplicationDeployment -CollectionName $Script:DeployColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime  | Out-Null
     #Create Rollback Applications
-    Write-host "Creating Rollback Applicaton, Deployment Type, and Deplying to $Script:DeployRollbackColl"
-    New-CMApplication -Name $Script:PreviousPkgName -AutoInstall $true -Description $Script:PreviousPkgName -SoftwareVersion $Script:ChromeVersion
-    Add-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Rollback" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause
+    Write-host "Creating Rollback Applicaton, Deployment Type, and Deplying to $Script:DeployRollbackColl" | Out-Null
+    New-CMApplication -Name $Script:PreviousPkgName -AutoInstall $true -Description $Script:PreviousPkgName -SoftwareVersion $Script:ChromeVersion | Out-Null
+    Add-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Rollback" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause | Out-Null
     Write-Host "Distributing $Script:PreviousPkgName" -ForegroundColor Yellow
-    Start-CMContentDistribution -ApplicationName $Script:PreviousPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
-    New-CMApplicationDeployment -CollectionName $Script:DeployRollbackColl -ApplicationName $Script:PreviousPkgName -DeployAction Install -DeployPurpose Available -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -TimeBaseOn LocalTime
+    Start-CMContentDistribution -ApplicationName $Script:PreviousPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name) | Out-Null
+    New-CMApplicationDeployment -CollectionName $Script:DeployRollbackColl -ApplicationName $Script:PreviousPkgName -DeployAction Install -DeployPurpose Available -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -TimeBaseOn LocalTime | Out-Null
 } else {
     Write-Host "Updating Existing Deployment Packages" -ForegroundColor Yellow
     #previous package
     Set-CMApplication -Name $Script:PreviousPkgName -SoftwareVersion $Script:CurrentPkg.SoftwareVersion
     Set-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $PreviousLocation -RemoveDetectionClause $PreviousOldDetections -AddDetectionClause($PreviousClause)
-    Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
     Set-CMApplicationDeployment -ApplicationName $Script:PreviousPkgName -CollectionName $Script:DeployRollbackColl -AvailableDateTime (get-date 06:00:00).AddDays(0)
     #current package
     Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion
     Set-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -RemoveDetectionClause $OldDetections -AddDetectionClause($clause)
-    Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
-    Set-CMApplicationDeployment -ApplicationName $Script:PreviousPkgName -CollectionName $Script:DeployRollbackColl -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) 
+    Set-CMApplicationDeployment -ApplicationName $Script:PreviousPkgName -CollectionName $Script:DeployRollbackColl -AvailableDateTime (get-date 06:00:00).AddDays(0)
     Write-Host "Redistributing Content for $Script:CurrentPkgName and $Script:PreviousPkgName " -ForegroundColor Yellow
     Update-CMDistributionPoint -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName
     Update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName    
