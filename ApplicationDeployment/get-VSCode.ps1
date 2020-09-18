@@ -117,6 +117,7 @@ Function SetInstaller {
     param ([parameter(Mandatory=$true)][string]$perform)
     if (!($perform)) {exit 1}
     if ($perform -eq "Install") {
+	if (get-process code){get-process code | stop-process -force}
         $strArgs = @("/silent","/CLOSEAPPLICATIONS","/RESTARTAPPLICATIONS")
         & "$(Get-Location)\VSCode64.exe" $strArgs
     }
@@ -126,6 +127,7 @@ Function SetInstaller {
         $strArgs = "/silent"
         if (Test-path $strUninstall -ErrorAction SilentlyContinue){& $strUninstall $strArgs}
     }
+
 '@
 $installer | out-file $Script:TempDirectory\$Script:VSCodeVersion\set-vscode.ps1 -Encoding ascii   
 }
