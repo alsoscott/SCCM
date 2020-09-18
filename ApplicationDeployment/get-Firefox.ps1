@@ -22,7 +22,7 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 #>
 param ([switch]$FirstRun)
  
-if (!(get-psdrive -PSProvider CMSite -ErrorAction SilentlyContinue)) {. ..\set-sccmsite.ps1}
+. ..\set-sccmsite.ps1
 $Script:TempDirectory = $env:TEMP #inital download directory
 $Script:CurrentPkgName = "Mozilla Firefox"
 $Script:FirefoxColl = "Deploy | Mozilla Firefox"
@@ -130,7 +130,7 @@ if (!($FirstRun)){
 #paramaters set, populatating chagnes in SCCM now
 if ($FirstRun){
     New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:FirefoxVersion
-    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:FirefoxVersion -InstallCommand "install.bat" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause1
+    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:FirefoxVersion -InstallCommand "install.bat" -UninstallCommand "uninstall.bat" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause1
     Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
     New-CMApplicationDeployment -CollectionName $Script:FirefoxColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime
 } else {
