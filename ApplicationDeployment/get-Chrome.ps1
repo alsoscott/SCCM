@@ -22,7 +22,7 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 #>
 param ([switch]$FirstRun)
  
-if (!(get-psdrive -PSProvider CMSite -ErrorAction SilentlyContinue)) {. ..\set-sccmsite.ps1}
+. ..\set-sccmsite.ps1
 $Script:TempDirectory = $env:TEMP #inital download directory
 #package names
 $Script:CurrentPkgName = "Google Chrome"
