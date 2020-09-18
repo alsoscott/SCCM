@@ -45,7 +45,7 @@ $script:VSCodeVersion = $null
 #Checking for destination directory
 If (!(Test-Path -Path $Script:FinalDirectory)){
     Write-Host "Unable to locate destination directory, attempting to create: $Script:FinalDirectory" -ForegroundColor Yellow
-    try {new-item -ItemType Directory -Path $Script:FinalDirectory ; Write-Host -ForegroundColor Green "Success!"}
+    try {new-item -ItemType Directory -Path $Script:FinalDirectory | Out-Null ; Write-Host -ForegroundColor Green "Success!"}
     catch {Write-Host -ForegroundColor Red "Unable to create $Script:FinalDirectory - must exit now"; exit 0}
 }
 
@@ -114,7 +114,7 @@ try {
 }
 Function SetInstaller {
     $installer=@'
-    param ([parameter(Mandatory=$true)][string]$perform)
+    param ([parameter(Mandatory=$true)][string]$Action)
     if (!($perform)) {exit 1}
     if ($perform -eq "Install") {
 	if (get-process code){get-process code | stop-process -force}
@@ -157,15 +157,16 @@ $query = "select SMS_R_SYSTEM.ResourceID,SMS_R_SYSTEM.ResourceType,SMS_R_SYSTEM.
 if ($FirstRun){
     if (!(test-path "DeviceCollection\AppQueries")) {Write-Host -ForegroundColor Yellow "Creating AppQueries Folder, Console needs to be restarted if open" ; new-item -Name "AppQueries" -Path $($SiteCode+":\DeviceCollection")}
     if (!(test-path "DeviceCollection\AppDeployments")) {Write-Host -ForegroundColor Yellow "Creating AppDeployments Folder, Console needs to be restarted if open" ; new-item -Name 'AppDeployments' -Path $($SiteCode+":\DeviceCollection")}
-    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:QueryOutDateColl
-    Add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "VSCode Outdated" -QueryExpression $query
-    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:DeployColl
-    Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $Script:DeployColl -IncludeCollectionName $Script:QueryOutDateColl
+    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:QueryOutDateColl ; Write-Host -ForegroundColor Green "Created Collection $Script:QueryOutDateColl"
+    Add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "VSCode Outdated" -QueryExpression $query ; Write-Host -ForegroundColor Green "Added membership rule to: $Script:QueryOutDateColl"
+    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:DeployColl ; Write-Host -ForegroundColor Green "Created Collection: $Script:DeployColl"
+    Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $Script:DeployColl -IncludeCollectionName $Script:QueryOutDateColl ; Write-Host -ForegroundColor Green "Included $Script:QueryOutDateColl to $Script:DeployColl"
     Move-CMObject -FolderPath "DeviceCollection\AppQueries" -InputObject (Get-CMDeviceCollection -Name $Script:QueryOutDateColl)
-    Move-CMObject -FolderPath "DeviceCollection\AppDeployments" -InputObject (Get-CMDeviceCollection -Name $Script:DeployColl)   
+    Move-CMObject -FolderPath "DeviceCollection\AppDeployments" -InputObject (Get-CMDeviceCollection -Name $Script:DeployColl) ; Write-Host -ForegroundColor Green "Moved newly created collections to appropiate folders" 
 } else {
-    remove-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "VSCode Outdated" -Force -ErrorAction SilentlyContinue
+    remove-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "VSCode Outdated" -Force -ErrorAction SilentlyContinue 
     add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "VSCode Outdated" -QueryExpression $query -Force
+    Write-Host -ForegroundColor Green "Updated query on: $Script:QueryOutDateColl"
 }
 
 $clause = New-CMDetectionClauseFile -Value -Path "%ProgramFiles%\Microsoft VS Code" -FileName "Code.exe" -PropertyType Version -ExpressionOperator GreaterEquals -ExpectedValue $script:VSCodeVersion
@@ -175,17 +176,20 @@ If (!($FirstRun)) {
     [string[]]$OldDetections = (([regex]'(?<=SettingLogicalName=.)([^"]|\\")*').Matches($SDMPackageXML)).Value
 }
 if ($FirstRun){
-    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion
+    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion ; Write-Host -ForegroundColor Green "Created Application $script:CurrentPkgName"
     Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$script:VSCodeVersion -InstallCommand "set-vscode.ps1 -action Install" -UninstallCommand "set-vscode.ps1 -action Uninstall" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause
-    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
+    Write-Host -ForegroundColor Green "Created Deployment type $script:CurrentPkgName"
+    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)  ; Write-Host -ForegroundColor Green "Distribued content to group: $((Get-CMDistributionPointGroup).Name)"
     New-CMApplicationDeployment -CollectionName $Script:DeployColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime
+    Write-Host -ForegroundColor Green "Deployed $script:CurrentPkgName to `"$Script:DeployColl`" with a deadline of $($(get-date 18:00:00).AddDays(1))"
 } else {
     Write-Host "Updating Deployment Packages" -ForegroundColor Yellow
-    Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion
+    Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $script:VSCodeVersion  ; Write-Host -ForegroundColor Green "Updated Application Version to $script:VSCodeVersion"
     Set-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$script:VSCodeVersion -RemoveDetectionClause $OldDetections -AddDetectionClause($clause)
-    Write-Host "Redistributing Content" -ForegroundColor Yellow
-    Update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName
+    Write-Host -ForegroundColor Green "Updated deployment type: Changed Content Source, Updated detection Method"
+    Update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName;  ; Write-Host -ForegroundColor Green "Redistributed content"
     Set-CMApplicationDeployment -ApplicationName $Script:CurrentPkgName -CollectionName $Script:DeployColl -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1)
+    Write-Host -ForegroundColor Green "Rescheduled deployment to `"$Script:DeployColl`" with a deadline of $($(get-date 18:00:00).AddDays(1))"
 }
 #return to local disk
 Set-location $curLoc
