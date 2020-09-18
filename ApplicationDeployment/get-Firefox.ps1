@@ -20,7 +20,8 @@ Required additional script needed: Get-MSIFileInformation.ps1 which can be obtai
 
 ************************************************************************************************************************
 #>
-param ([switch]$FirstRun) 
+param ([switch]$FirstRun)
+ 
 
 $Script:TempDirectory = $env:TEMP #inital download directory
 $Script:FinalDirectory = "\\server\share" #final destination for Firefox installers
