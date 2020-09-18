@@ -29,6 +29,7 @@ $Script:CurrentPkgName = "Google Chrome"
 $Script:PreviousPkgName = "Google Chrome (Rollback)"
 #deployment collections
 $Script:DeployColl = "Deploy | Google Chrome"
+$Script:DeployRollbackColl = "Deploy | Google Chrome (Rollback)"
 $Script:QueryOutDateColl = "Query | Google Chrome Outdated"
 
 #reset ChromeVersion
@@ -46,11 +47,7 @@ If (!(Test-Path -Path $Script:FinalDirectory)){
 
 
 #checking for required external scripts
-if (!(Test-path -path $PSScriptRoot -ErrorAction SilentlyContinue | Out-Null)){
-    $ScriptRoot = "C:\Users\Scott\Documents\GitHub\SCCM\ApplicationDeployment"
-} else {$ScriptRoot = $PSScriptRoot}
-
-If (!(Test-Path -Path $ScriptRoot\Get-MSIFileInformation.ps1)){
+If (!(Test-Path -Path $PSScriptRoot\Get-MSIFileInformation.ps1)){
     Write-Host "MSI File Information Script not present.  If lost, download from https://www.scconfigmgr.com/2014/08/22/how-to-get-msi-file-information-with-powershell/ " -ForegroundColor Red
     exit
 }
@@ -91,7 +88,7 @@ Function Get-ChromeVersion {
         exit
     }
 }
-Function GetChrome {
+Function Download-Chrome {
     param ([switch]$FirstRun)
     # Download the installer from Google
 try {
@@ -113,10 +110,10 @@ try {
 
     if (!($FirstRun)){
         $PreviousLocation = (Get-ChildItem -Path $Script:FinalDirectory -Attributes D | Where-Object { $_.Name -match '\d' } | Sort-Object -Property LastWriteTime | select -last 1).fullname
-        $OldProdcutCode = (MSIInfo -path $strPreviousLocation\GoogleChromeStandaloneEnterprise64.msi -Property ProductCode) | Out-String
-        $Script:strOldProductCode = $strOldProdcutCode.Replace('{','').Replace('}','')
+        $OldProdcutCode = (MSIInfo -path $PreviousLocation\GoogleChromeStandaloneEnterprise64.msi -Property ProductCode) | Out-String
+        $Script:OldProductCode = $OldProdcutCode.Replace('{','').Replace('}','')
         Write-Host "Old Product Code: "$Script:OldProductCode -ForegroundColor Green
-    }
+    } else {$Script:OldProductCode = $Script:ProductCodex64}
 }
 
 Function CreateBatch {
@@ -158,10 +155,7 @@ Write-Host "Built PoSH installer script" -ForegroundColor Yellow
 Function UpdateFiles {
     
     try {
-        #Create Destination
-        #New-Item -ItemType Directory -Path $strFinalDirectory\$ChromeVersion | Out-Null
-        # Move the installer to server
-        Copy-item -Container -Recurse "$Script:TempDirectory\$Script:ChromeVersion" $Script:FinalDirectory
+        Copy-item -Container -Recurse -Force "$Script:TempDirectory\$Script:ChromeVersion" $Script:FinalDirectory
         } catch {
         Write-Host "Upload failed. You will have to move the installer yourself from $Script:strTempDirectory" -ForegroundColor Red
     }
@@ -170,7 +164,7 @@ Function UpdateFiles {
 
 
 #update deployment package on SCCM to current version, and redistribute
-Function SetSCCMDeployment {
+Function Set-SCCMDeployment {
 param ([switch]$FirstRun)
 Write-Host "Connecting to SCCM Site Server" -ForegroundColor Yellow
 $curLoc = (Get-Location)
@@ -181,12 +175,18 @@ $query = "select SMS_R_SYSTEM.ResourceID,SMS_R_SYSTEM.ResourceType,SMS_R_SYSTEM.
 if ($FirstRun){
     if (!(test-path "DeviceCollection\AppQueries")) {Write-Host -ForegroundColor Yellow "Creating AppQueries Folder, Console needs to be restarted if open" ; new-item -Name "AppQueries" -Path $($SiteCode+":\DeviceCollection")}
     if (!(test-path "DeviceCollection\AppDeployments")) {Write-Host -ForegroundColor Yellow "Creating AppDeployments Folder, Console needs to be restarted if open" ; new-item -Name 'AppDeployments' -Path $($SiteCode+":\DeviceCollection")}
+    #Create Outdated Collection - Query for Chrome with outdated versions
     New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:QueryOutDateColl
     Add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "Chrome Outdated" -QueryExpression $query
+    #Create Deployment Collection - Includes Outdated Query Collection
     New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:DeployColl
     Add-CMDeviceCollectionIncludeMembershipRule -CollectionName $Script:DeployColl -IncludeCollectionName $Script:QueryOutDateColl
+    #Create Rollback Deployment Collection - this has no membership rules
+    New-CMDeviceCollection -LimitingCollectionName "All Desktop and Server Clients" -Name $Script:DeployRollbackColl
+    #move above collections into folders
     Move-CMObject -FolderPath "DeviceCollection\AppQueries" -InputObject (Get-CMDeviceCollection -Name $Script:QueryOutDateColl)
     Move-CMObject -FolderPath "DeviceCollection\AppDeployments" -InputObject (Get-CMDeviceCollection -Name $Script:DeployColl)
+    Move-CMObject -FolderPath "DeviceCollection\AppDeployments" -InputObject (Get-CMDeviceCollection -Name $Script:DeployRollbackColl)
 } else {
     remove-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName 'Outdated' -Force
     add-CMDeviceCollectionQueryMembershipRule -CollectionName $Script:QueryOutDateColl -RuleName "Outdated" -QueryExpression $query
@@ -194,7 +194,9 @@ if ($FirstRun){
 
 #Build updated Detection Method Clauses
 $clause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:ProductCodex64 -Existence
-If ($FirstRun){$PreviousClause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:OldProductCode -Existence}
+If ($FirstRun){$PreviousClause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:ProductCodex64 -Existence} else {
+    $PreviousClause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:OldProductCode -Existence
+}
 
 #pulling Package information to update
 if (!($FirstRun)) {
@@ -213,85 +215,45 @@ if (!($FirstRun)) {
 #paramaters set, populatating chagnes in SCCM now
 if ($FirstRun){
     Write-Host "Creating Application, Deployment Type and deploying to $Script:DeployColl" -ForegroundColor Yellow  
+    #Create Current Application
+    Write-host "Creating Applicaton, Deployment Type, and Deplying to $Script:DeployColl"
     New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion
-    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Install" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause1
+    Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Install" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause
+    Write-Host "Distributing $Script:CurrentPkgName" -ForegroundColor Yellow
     Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
-    #rollback applications
-    New-CMApplication -Name $Script:PreviousPkgName -AutoInstall $true -Description $Script:PreviousPkgName -SoftwareVersion $Script:ChromeVersion
-    Add-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Rollback" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause1 -
-    Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
-
     New-CMApplicationDeployment -CollectionName $Script:DeployColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) -TimeBaseOn LocalTime
-    New-CMApplicationDeployment -CollectionName $Script:QueryOutDateColl -ApplicationName $Script:CurrentPkgName -DeployAction Install -DeployPurpose Required -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(7) -TimeBaseOn LocalTime
+    #Create Rollback Applications
+    Write-host "Creating Rollback Applicaton, Deployment Type, and Deplying to $Script:DeployRollbackColl"
+    New-CMApplication -Name $Script:PreviousPkgName -AutoInstall $true -Description $Script:PreviousPkgName -SoftwareVersion $Script:ChromeVersion
+    Add-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Rollback" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause
+    Write-Host "Distributing $Script:PreviousPkgName" -ForegroundColor Yellow
+    Start-CMContentDistribution -ApplicationName $Script:PreviousPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)
+    New-CMApplicationDeployment -CollectionName $Script:DeployRollbackColl -ApplicationName $Script:PreviousPkgName -DeployAction Install -DeployPurpose Available -UserNotification DisplaySoftwareCenterOnly -AvailableDateTime (get-date 06:00:00).AddDays(0) -TimeBaseOn LocalTime
 } else {
-    Write-Host "Updating Deployment Packages" -ForegroundColor Yellow
+    Write-Host "Updating Existing Deployment Packages" -ForegroundColor Yellow
     #previous package
     Set-CMApplication -Name $Script:PreviousPkgName -SoftwareVersion $Script:CurrentPkg.SoftwareVersion
     Set-CMScriptDeploymentType -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName -ContentLocation $PreviousLocation -RemoveDetectionClause $PreviousOldDetections -AddDetectionClause($PreviousClause)
+    Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
+    Set-CMApplicationDeployment -ApplicationName $Script:PreviousPkgName -CollectionName $Script:DeployRollbackColl -AvailableDateTime (get-date 06:00:00).AddDays(0)
     #current package
     Set-CMApplication -Name $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion
     Set-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -RemoveDetectionClause $OldDetections -AddDetectionClause($clause)
-    Write-Host "Redistributing Content" -ForegroundColor Yellow
+    Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
+    Set-CMApplicationDeployment -ApplicationName $Script:PreviousPkgName -CollectionName $Script:DeployRollbackColl -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(1) 
+    Write-Host "Redistributing Content for $Script:CurrentPkgName and $Script:PreviousPkgName " -ForegroundColor Yellow
     Update-CMDistributionPoint -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName
     Update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName    
 } 
 
-#re-schedule deployments
-$strServerDate = @(@(0..7) | % {$(Get-Date 18:00:00).AddDays($_)} | ? {$_.DayOfWeek -ieq "Friday"})[0]
-Write-Host "Reset deployment deadlines:" -ForegroundColor Yellow
-Write-Host "Starting at below times, during maintenance window"  -ForegroundColor Yellow
-Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strPilotColl -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime (get-date 18:00:00).AddDays(0)
-
-<# ---- Pilot, All deployments
-Write-Host "Pilot : "(get-date 18:00:00).AddDays(0) -ForegroundColor Yellow
-Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strWkstAll -AvailableDateTime (get-date 06:00:00).AddDays(0)  -DeadlineDateTime (get-date 18:00:00).AddDays(2)
-Write-Host "All Wkst : "(get-date 18:00:00).AddDays(2) -ForegroundColor Yellow
-Set-CMApplicationDeployment -ApplicationName $Script:strCurrentPkgName -CollectionName $Script:strServerAll -AvailableDateTime (get-date 06:00:00).AddDays(0) -DeadlineDateTime $strServerDate
-#>
 #return to local disk
 Set-Location $curLoc
 }
 
-Function FirstRun {
-Write-Host "Creating Application and Deployment Package." -ForegroundColor Yellow
-Write-Host "Connecting to SCCM Site Server" -ForegroundColor Yellow
-#site connection
-$initParams = @{}
-if((Get-Module ConfigurationManager) -eq $null) {
-    Import-Module "$($ENV:SMS_ADMIN_UI_PATH)\..\ConfigurationManager.psd1" @initParams 
-    }
-    if((Get-PSDrive -Name $Script:strSiteCode -PSProvider CMSite -ErrorAction SilentlyContinue) -eq $null) {
-        New-PSDrive -Name $Script:strSiteCode -PSProvider CMSite -Root $Script:strProviderMachineName @initParams
-        }
-    Set-Location "$($strSiteCode):\" @initParams
-            
-    #Build updated Detection Method Clauses
-        $clause = New-CMDetectionClauseWindowsInstaller -ProductCode $Script:strProductCodex64 -Existence
-        $clause.Connector = 'Or'
-    #paramaters set, populatating changes in SCCM now
-        Write-Host "Creating Deployment Packages" -ForegroundColor Yellow
-        New-CMApplication -Name $Script:strCurrentPkgName -SoftwareVersion $Script:ChromeVersion
-        Add-CMScriptDeploymentType -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName -ContentLocation $Script:FinalDirectory\$ChromeVersion -AddDetectionClause($clause) -InstallCommand "set-Chrome.ps1 -Action install" -UninstallCommand "set-Chrome.ps1 -Action uninstall"
-        Write-Host "Distributing Content" -ForegroundColor Yellow
-        Update-CMDistributionPoint -ApplicationName $Script:strPreviousPkgName -DeploymentTypeName $Script:strPreviousPkgName
-        Update-CMDistributionPoint -ApplicationName $Script:strCurrentPkgName -DeploymentTypeName $Script:strCurrentPkgName
-    #return to local disk
-        sl c:
-        
-}
-
-
-
 
 Get-ChromeVersion
-GetChrome
+if ($FirstRun){download-Chrome -FirstRun} else {download-Chrome}
 CreateBatch
 UpdateFiles
-If ($FirstRun){
-   FirstRun
-}
-Else {
-    SetSCCMDeployment
-} 
-Clear-Variable -Name "str*"
+If ($FirstRun){Set-SCCMDeployment -FirstRun} Else {Set-SCCMDeployment} 
 Write-Host "Complete!" -ForegroundColor Yellow
