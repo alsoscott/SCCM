@@ -219,7 +219,7 @@ if (!($FirstRun)) {
 if ($FirstRun){
     Write-Host "Creating Application, Deployment Type and deploying to $Script:DeployColl" -ForegroundColor Yellow  
     #Create Current Application
-    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $Script:CurrentPkgName -SoftwareVersion $Script:ChromeVersion | Out-Null; Write-host -ForegroundColor Green "Created Applicaton, Deployment Type, and Deplying to $Script:DeployColl"
+    New-CMApplication -Name $Script:CurrentPkgName -AutoInstall $true -Description $CurrentPkgName -SoftwareVersion $Script:ChromeVersion | Out-Null; Write-host -ForegroundColor Green "Created Applicaton, Deployment Type, and Deplying to $DeployColl"
     Add-CMScriptDeploymentType -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName -ContentLocation $Script:FinalDirectory\$Script:ChromeVersion -InstallCommand "set-chrome.ps1 -Action Install" -InstallationBehaviorType InstallForSystem -AddDetectionClause $clause  | Out-Null
     Write-Host "Created deployment type for: $Script:CurrentPkgName" -ForegroundColor Green  | Out-Null
     Start-CMContentDistribution -ApplicationName $Script:CurrentPkgName -DistributionPointGroupName $((Get-CMDistributionPointGroup).Name)  | Out-Null; Write-Host "Distributed $Script:CurrentPkgName" -ForegroundColor Green | Out-Null
@@ -247,7 +247,7 @@ if ($FirstRun){
     Write-Host -ForegroundColor Green "Rescheduled deployment to `"$Script:DeployColl`" with a deadline of $($(get-date 18:00:00).AddDays(1))"
     Update-CMDistributionPoint -ApplicationName $Script:PreviousPkgName -DeploymentTypeName $Script:PreviousPkgName
     Update-CMDistributionPoint -ApplicationName $Script:CurrentPkgName -DeploymentTypeName $Script:CurrentPkgName    
-    Write-Host -ForegroundColor Green "Redistributed Content for $Script:CurrentPkgName and $Script:PreviousPkgName " -ForegroundColor Green
+    Write-Host -ForegroundColor Green "Redistributed Content for $Script:CurrentPkgName and $Script:PreviousPkgName "
 } 
 
 #return to local disk
